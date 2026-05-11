@@ -1,0 +1,24 @@
+{
+    "hipporag": {
+        "vector": {
+            "token_overlap": 128,
+            "batch_size": 16,
+            "model_id": "nomic-ai/nomic-embed-text-v1.5",
+            "model_save_root": "./models",
+            "vector_db": "./vectors",
+            "table_name": "narrative-qna",
+            "use_binary": false,
+            "metric": "cosine"
+        },
+        "graph": {
+            "graph_db": "./graph"
+        },
+        "llm": {
+            "host": "http://localhost:11434",
+            "model_id": "phi4-mini-reasoning:3.8b",
+            "gliner_model": "knowledgator/gliner-multitask-large-v0.5",
+            "spacy_model": "en_core_web_lg",
+            "summary_model": "google/flan-t5-large"
+        }
+    }
+}

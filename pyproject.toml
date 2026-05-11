@@ -1,0 +1,43 @@
+[project]
+name = "local-hipporag"
+version = "0.1.0"
+description = "A high-performance, local-first HippoRAG utility."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    {name = "Diego Magdaleno", email = "magdaleno_m@sbcglobal.net"}
+]
+classifiers = [
+	"Programming Language :: Python :: 3.11",
+    "Operating System :: OS Independent",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence"
+]
+dependencies = [
+    "accelerate>=1.10.1",
+    "datasets>=2.15.0",
+    "gliner>=0.2.26",
+    "huggingface-hub>=0.35.3",
+    "ladybug>=0.16.1",
+    "lancedb>=0.25.1",
+    "local-vectors>=0.1.4",
+    "networkx>=3.2",
+    "numpy>=2.0.2",
+    "pyarrow>=21.0.0",
+    "requests>=2.32.5",
+    "safetensors>=0.6.2",
+    "spacy>=3.8.14",
+    "tokenizers>=0.22.0",
+    "torch>=2.1.0",
+    "transformers>=4.56.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-mock>=3.12.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.21.0"] # Specify a minimum version for robustness
+build-backend = "hatchling.build"
