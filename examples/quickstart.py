@@ -69,7 +69,7 @@ def main():
 	device = detect_device(force_cpu=True)
 
 	# Initialize hipporag with the configuration.
-	hipporag = HippoRAG(
+	hipporag = HippoRAG2(
 		embed_model_id=vector_config["model_id"],
 		vector_db_path=vector_config["vector_db"],
 		graph_db_path=graph_config["graph_db"],
@@ -108,7 +108,8 @@ def main():
 	])
 	hipporag.build_vector_table(
 		table_name=vector_config["table_name"],
-		schema=schema
+		# schema=schema,
+		schema=schema2
 	)
 
 	# Ingest and index the documents to the hipporag.

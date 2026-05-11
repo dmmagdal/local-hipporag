@@ -263,6 +263,7 @@ class HippoRAG2:
 		# Initialize the graphdb.
 		self.graphdb = LadybugGraphDB(
 			db_path=graph_db_path,
+			hipporagv2=True
 		)
 
 		# Initialize the LLM model(s) depending on whether "classical"

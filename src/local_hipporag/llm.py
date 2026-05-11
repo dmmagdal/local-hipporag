@@ -33,14 +33,6 @@ class LLM:
 
 	def extract_entities(self, text: str) -> List[str]:
 		return []
-		
-
-	def extract_knowledge_graph(self, text: str) -> Tuple[List[str], Dict[str, str]]:
-		return self.extract_entities(text), self.extract_triplets(text)
-	
-
-	def generate_summary(self, text: str) -> str:
-		return ""
 	
 
 	def generate_response(self, prompt: str) -> str:
@@ -117,17 +109,6 @@ class OllamaLLM(LLM):
 			return json.loads(raw_json)
 		except: 
 			return []
-		
-
-	def extract_knowledge_graph(self, text: str) -> Tuple[List[str], List[Dict[str, str]]]:
-		return self.entity_extraction(text), self.extract_triplets(text)
-	
-
-	def generate_summary(self, text: str):
-		prompt = f"""Generate a short/concise summary of the following text.
-		Text: {text}
-		Summary:"""
-		return self.call_llm(prompt)
 	
 
 	def filter_texts(self, query: str, texts: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
@@ -166,7 +147,6 @@ class GlinerLLM(LLM):
 		# Initialize/load models.
 		self.ner = self._load_gliner_model()
 		self.nlp = spacy.load(spacy_model)
-		self.tokenizer, self.model = self._load_summary_model()
 
 		default_items = [
 			"Person", "Org", "Product", "Event", "Concept"
@@ -221,27 +201,6 @@ class GlinerLLM(LLM):
 		return relations
 	
 
-	def generate_summary(self, text, max_length: int = 256) -> str:
-		# Configure prompt and tokenize.
-		prompt = f"summarize: {text}"
-		inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
-    
-		# Generation outputs.
-		outputs = self.model.generate(
-			**inputs, 
-			max_new_tokens=max_length,
-			num_beams=4,
-			do_sample=False,
-			early_stopping=True
-		)
-		
-		# Return decoded summary.
-		return self.tokenizer.decode(
-			outputs[0], 
-			skip_special_tokens=True
-		)
-	
-
 	def filter_texts(self, query: str, texts: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
 		valid_passages = []
 		for doc_id, text in texts:
@@ -252,97 +211,11 @@ class GlinerLLM(LLM):
 				
 		return valid_passages if valid_passages else texts
 	
-
-	def extract_knowledge_graph(self, text) -> Tuple[List[str], Dict[str, str]]:
-		return self.extract_entities(text), self.extract_triplets(text)
-	
 		
 	def generate_response(self, prompt: str) -> str:
 		if self.OLLAMA_URL is None:
 			pass
 		return self.call_llm(prompt)
-	
-
-	def _load_summary_model(self) -> Tuple[AutoTokenizer, AutoModelForSeq2SeqLM]:
-		'''
-		Load the tokenizer and model. Download them if they're not found 
-			locally.
-		@param: model_id (str), the ID of the model as it is saved in
-			Hugging Face.
-		@param: model_save_root (str), the root directory where the model
-			is saved locally. Default is "~/.cache/local-vectors/models".
-		@param: device (str), tells where to map the model. Default is 
-			"cpu".
-		@return: returns the tokenizer and model for embedding the text.
-		'''
-		# Check for the local copy of the model. If the model doesn't have
-		# a local copy (the path doesn't exist), download it.
-		model_path = str(Path(self.model_save_root) / self.summary_model.replace("/", "_"))
-		
-		# Check for path and that path is a directory. Make it if either is
-		# not true.
-		if not os.path.exists(model_path) or not os.path.isdir(model_path):
-			os.makedirs(model_path, exist_ok=True)
-
-		# Check for path the be populated with files (weak check). Download
-		# the tokenizer and model and clean up files once done.
-		if len(os.listdir(model_path)) == 0:
-			print(f"Model {self.summary_model} needs to be downloaded.")
-
-			# Check for internet connection (also checks to see that
-			# huggingface is online as well). Exit if fails.
-			response = requests.get("https://huggingface.co/")
-			if response.status_code != 200:
-				print(f"Request to huggingface.co returned unexpected status code: {response.status_code}")
-				print(f"Unable to download {self.summary_model} model.")
-				exit(1)
-
-			# Create cache path folders.
-			cache_path = str(Path(self.model_save_root) / self.summary_model.replace("/", "_")) + "_tmp"
-			os.makedirs(cache_path, exist_ok=True)
-			os.makedirs(model_path, exist_ok=True)
-
-			# Load tokenizer and model.
-			tokenizer = AutoTokenizer.from_pretrained(
-				self.summary_model, 
-				cache_dir=cache_path, 
-				device_map=self.device
-			)
-			model = AutoModelForSeq2SeqLM.from_pretrained(
-				self.summary_model, 
-				cache_dir=cache_path, 
-				device_map=self.device,
-				trust_remote_code=True, 
-				use_safetensors=True
-			)
-
-			# Load the model metadata and save it to the save path.
-			AutoConfig.from_pretrained(
-				self.summary_model, 
-				cache_dir=model_path
-			)
-
-			# Save the tokenizer and model to the save path.
-			tokenizer.save_pretrained(model_path)
-			model.save_pretrained(model_path)
-
-			# Delete the cache.
-			shutil.rmtree(cache_path)
-		
-		# Load the tokenizer and model.
-		tokenizer = AutoTokenizer.from_pretrained(
-			model_path, 
-			device_map=self.device
-		)
-		model = AutoModelForSeq2SeqLM.from_pretrained(
-			model_path, 
-			device_map=self.device,
-			trust_remote_code=True, 
-			use_safetensors=True
-		)
-
-		# Return the tokenizer and model.
-		return tokenizer, model
 
 		
 	def _load_gliner_model(self) -> GLiNER:

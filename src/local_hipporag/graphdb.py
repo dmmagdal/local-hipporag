@@ -50,15 +50,17 @@ class LadybugGraphDB:
 
 	def add_text(self, text: str, doc_id: str) -> None:
 			self.conn.execute(
-				f"CREATE (p:Passage {{id: '{doc_id}', text: '{text}'}})", 
+				f"CREATE (p:Passage {{id: $id, text: $text}})",
+				{"id": doc_id, "text": text}
 			)
 
 
 	def link_docs_to_entities(self, doc_id: str, entity: str) -> None:
-		self.conn.execute(f"""
-			MATCH (p:Passage {{id: '{doc_id}'}}), (e:Entity {{name: '{entity}'}})
+		command = f"""
+			MATCH (p:Passage {{id: $doc_id}}), (e:Entity {{name: $entity}})
 			MERGE (p)-[:CONTAINS]->(e)
-		""")
+		"""
+		self.conn.execute(command, {"doc_id": doc_id, "entity": entity})
 
 
 	def add_entity(self, entity: str) -> None:
