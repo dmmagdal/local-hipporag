@@ -135,6 +135,15 @@ def main():
 			else:
 				os.remove(artifact)
 
+	# NOTE:
+	# HippoRAG 1 & 2 ingestion times are at around 8s/doc for this 
+	# dataset. Vanilla RAG ingestion times are at around 2s/doc for the
+	# same dataset.
+	# Possible bottlenecks:
+	# - single chunk or low chunk documents make ingestion very slow.
+	# - single doc, single chunk sequential ingestion. Could take 
+	# advantage of batching across chunks or documents.
+
 	# Exit the program.
 	exit(0)
 
