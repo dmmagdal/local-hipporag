@@ -112,6 +112,15 @@ class LadybugGraphDB:
 		)
 
 
+	def batch_co_occurences(self, pairs: List[Tuple[str, str]]) -> None:
+		query = """
+			UNWIND $pairs AS pair
+			MATCH (a:Entity {name: pair[0]}), (b:Entity {name: pair[1]})
+			MERGE (a)-[:CO_OCCURS]->(b)
+		"""
+		self.conn.execute(query, {"pairs": pairs})
+
+
 	def query(self, entity_id: str) -> List[str]:
 		return self.conn.execute(
 			"MATCH (a:Entity {id: $id})-[r:RELATES]->(b) RETURN a.id, r.relation, b.id",
@@ -119,3 +128,11 @@ class LadybugGraphDB:
 				"id": entity_id
 			}
 		)
+
+	
+	def checkpoint(self) -> None:
+		self.conn.execute("CHECKPOINT;")
+
+
+	def close_db(self) -> None:
+		self.conn.close()

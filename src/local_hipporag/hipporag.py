@@ -1,15 +1,13 @@
 # hipporag.py
 
 
-import json
 from pathlib import Path
-from typing import List
+from typing import Dict, List
 
-from local_vectors import LocalEmbedder, LanceDBConnection, detect_device
+from local_vectors import LocalEmbedder, LanceDBConnection
 import networkx as nx
 import pyarrow as pa
 
-from .chunker import Chunker
 from .graphdb import LadybugGraphDB
 from .llm import OllamaLLM, GlinerLLM
 
@@ -137,6 +135,60 @@ class HippoRAG:
 		for i in range(len(entities)):
 			for j in range(i + 1, len(entities)):
 				self.graphdb.co_occurences(entities[i], entities[j])
+
+		self.graphdb.checkpoint()
+
+
+	def batch_ingest(self, documents: Dict[str, str], table_name: str) -> None:
+		vector_data = []
+		processed_entites = set()
+
+		for doc_id, document in documents.items():
+			self.passages_db[doc_id] = document
+
+			# Extract entities with Gliner.
+			entities = list(set([
+				entity["text"].lower() 
+				for entity in self.llm.extract_entities(document)
+			]))
+			self.passages_to_entities[doc_id] = entities
+
+			if not entities:
+				continue
+
+			for entity in entities:
+				# Skip the embedding and insert to DB steps if we've 
+				# already processed this entity in the batch.
+				if entity not in processed_entites:
+					try:
+						self.graphdb.add_entity(entity)
+						embedding = self.embedder.embed_text(
+							document,
+							truncate=True,
+							to_binary=self.use_binary,
+							vectors_only=True
+						)[0]
+						vector_data.append({
+							"vector": embedding["vector_binary"] if self.use_binary else embedding["Vector_full"],
+							"entity_name": entity,
+						})
+						processed_entites.add(entity)
+					except:
+						pass
+
+			# Create unweighted co-occurence edges.
+			for i in range(len(entities)):
+				for j in range(i + 1, len(entities)):
+					self.graphdb.co_occurences(entities[i], entities[j])
+
+		# Insert all aggregated embeddings into vectordb at once.
+		if vector_data:
+			self.vectordb.update_table(
+				table_name=table_name, 
+				data=vector_data
+			)
+	
+		self.graphdb.checkpoint()
 
 
 	def query(self, query: str, table_name: str, top_k: int = 5) -> str:
@@ -344,7 +396,7 @@ class HippoRAG2:
 					truncate=True, 
 					to_binary=self.use_binary,
 					vectors_only=True
-				)
+				)[0]
 				e_vectors.append({
 					"vector": entity_embedding["vector_binary"] if self.use_binary else entity_embedding["vector_full"],
 					"node_id": entity,
@@ -368,6 +420,80 @@ class HippoRAG2:
 			table_name=table_name, 
 			data=vector_data
 		)
+		self.graphdb.checkpoint()
+
+	
+	def batch_ingest(self, documents: Dict[str, str], table_name: str) -> None:
+		vector_data = []
+		processed_entities = set()
+
+		for doc_id, document in documents.items():
+			entities = list(set([
+				entity["text"].lower() for entity in self.llm.extract_entities(document)
+			]))
+			self.passages_to_entities[doc_id] = entities
+			
+			if not entities:
+				continue
+			
+			# Insert document into ladybug.
+			self.graphdb.add_text(document, doc_id=doc_id)
+
+			# Store document embeddings into lancedb.
+			p_vectors = [
+				{
+					"vector": vector["vector_binary"] if self.use_binary else vector["vector_full"],
+					"node_id": doc_id,
+					"type": "passage",
+					"text": document[vector["text_idx"]: vector["text_idx"] + vector["text_len"]]
+				}
+				for vector in self.embedder.embed_text(
+					document,
+					to_binary=self.use_binary,
+				)
+			]
+			vector_data.extend(p_vectors)
+
+			e_vectors = []
+			for entity in entities:
+				# Insert entity node.
+				try:
+					self.graphdb.add_entity(entity)
+					entity_embedding = self.embedder.embed_text(
+						entity, 
+						truncate=True, 
+						to_binary=self.use_binary,
+						vectors_only=True
+					)[0]
+					e_vectors.append({
+						"vector": entity_embedding["vector_binary"] if self.use_binary else entity_embedding["vector_full"],
+						"node_id": entity,
+						"type": "entity",
+						"text": ""
+					})
+					processed_entities.add(entity)
+				except:
+					pass
+
+				# Link documents to entities.
+				self.graphdb.link_docs_to_entities(doc_id, entity)
+
+			# Create unweighted co-occurence edges.
+			for i in range(len(entities)):
+				for j in range(i + 1, len(entities)):
+					self.graphdb.co_occurences(entities[i], entities[j])
+
+			vector_data.extend(e_vectors)
+
+		# Insert embeddings into vectordb.
+		# vector_data = p_vectors + e_vectors
+		if vector_data:
+			self.vectordb.update_table(
+				table_name=table_name, 
+				data=vector_data
+			)
+
+		self.graphdb.checkpoint()
 
 
 	def query(self, query: str, table_name: str, top_k: int = 5) -> str:

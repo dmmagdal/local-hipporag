@@ -1,6 +1,7 @@
 # quickstart.py
 
 
+import argparse
 import json
 import os
 import random
@@ -18,6 +19,25 @@ SEED = 1234
 random.seed(SEED)
 
 def main():
+	# Argument parser.
+	parser = argparse.ArgumentParser()
+	parser.add_argument(
+		"--no-reset",
+		action="store_true",
+		help="Whether or not to clean out all files and return document ingestion on the system before performing query. Default is False/not specified."
+	)
+	parser.add_argument(
+		"--sequential-store",
+		action="store_true",
+		help="Whether or not to ingest the documents sequentially (one-by-one) or in a batch. Default is False/not specified."
+	)
+	parser.add_argument(
+		"--use-hipporag-v2",
+		action="store_true",
+		help="Whether or not to use HippoRAG v2 (instead of v1). Default is False/not specified."
+	)
+	args = parser.parse_args()
+
 	# Load the dataset.
 	target_dataset = "illuin-conteb/narrative-qa"
 	cache_dir = f"./{target_dataset.replace('/', '_')}_cache"
@@ -58,18 +78,20 @@ def main():
 		"./graph",
 		"graph.wal",
 	]
-	for artifact in storage_artifacts:
-		if os.path.exists(artifact):
-			if os.path.isdir(artifact):
-				shutil.rmtree(artifact)
-			else:
-				os.remove(artifact)
+	if not args.no_reset:
+		for artifact in storage_artifacts:
+			if os.path.exists(artifact):
+				if os.path.isdir(artifact):
+					shutil.rmtree(artifact)
+				else:
+					os.remove(artifact)
 
 	# Detect GPU accelerators.
 	device = detect_device(force_cpu=True)
 
 	# Initialize hipporag with the configuration.
-	hipporag = HippoRAG2(
+	class_init = HippoRAG2 if args.use_hipporag_v2 else HippoRAG
+	hipporag = class_init(
 		embed_model_id=vector_config["model_id"],
 		vector_db_path=vector_config["vector_db"],
 		graph_db_path=graph_config["graph_db"],
@@ -89,37 +111,51 @@ def main():
 	# Define schema (this is heavily dependent upon the datasets) and
 	# pass that to the hipporag so that the vectordb can build the 
 	# table.
-	schema = pa.schema([
-		pa.field("entity_name", pa.string()),
-		pa.field("vector", pa.list_(
-			pa.uint8() if vector_config["use_binary"] else pa.float32(), 
-			hipporag.get_dims()
-		)),
-		pa.field("type", pa.string())
-	])
-	schema2 = pa.schema([
-		pa.field("text", pa.string()),
-		pa.field("node_id", pa.string()),
-		pa.field("vector", pa.list_(
-			pa.uint8() if vector_config["use_binary"] else pa.float32(), 
-			hipporag.get_dims()
-		)),
-		pa.field("type", pa.string())
-	])
+	if args.use_hipporag_v2:
+		schema = pa.schema([
+			pa.field("text", pa.string()),
+			pa.field("node_id", pa.string()),
+			pa.field("vector", pa.list_(
+				pa.uint8() if vector_config["use_binary"] else pa.float32(), 
+				hipporag.get_dims()
+			)),
+			pa.field("type", pa.string())
+		])
+	else:
+		schema = pa.schema([
+			pa.field("entity_name", pa.string()),
+			pa.field("vector", pa.list_(
+				pa.uint8() if vector_config["use_binary"] else pa.float32(), 
+				hipporag.get_dims()
+			)),
+			pa.field("type", pa.string())
+		])
+
 	hipporag.build_vector_table(
 		table_name=vector_config["table_name"],
-		# schema=schema,
-		schema=schema2
+		schema=schema,
 	)
 
 	# Ingest and index the documents to the hipporag.
 	for split_name, data in documents.items():
-		for doc in tqdm(data, desc=f"Ingesting {split_name} split into Graph RAG"):
-			hipporag.ingest(
-				text=doc["chunk"], 
-				doc_id=doc["chunk_id"],
-				table_name=vector_config["table_name"]
-			)
+		if args.sequential_store:
+			for doc in tqdm(data, desc=f"Ingesting {split_name} split into Graph RAG"):
+				hipporag.ingest(
+					text=doc["chunk"], 
+					doc_id=doc["chunk_id"],
+					table_name=vector_config["table_name"]
+				)
+		else:
+			for idx in tqdm(range(0, len(data), vector_config["batch_size"]), desc=f"Ingesting {split_name} split into Graph RAG"):
+				docs = data[idx:idx + vector_config["batch_size"]]
+				doc_list = {
+					chunk_id: chunk
+					for chunk_id, chunk in zip(docs["chunk_id"], docs["chunk"])
+				}
+				hipporag.batch_ingest(
+					doc_list,
+					table_name=vector_config["table_name"]
+				)
 
 	# Perform a query on the hipporag.
 	sampled_queries = queries.shuffle(seed=SEED).select(range(5))
@@ -134,12 +170,13 @@ def main():
 		print("-" * 72)
 
 	# Clear all tables or databases since we're done.
-	for artifact in storage_artifacts:
-		if os.path.exists(artifact):
-			if os.path.isdir(artifact):
-				shutil.rmtree(artifact)
-			else:
-				os.remove(artifact)
+	if not args.no_reset:
+		for artifact in storage_artifacts:
+			if os.path.exists(artifact):
+				if os.path.isdir(artifact):
+					shutil.rmtree(artifact)
+				else:
+					os.remove(artifact)
 
 	# Exit the program.
 	exit(0)
