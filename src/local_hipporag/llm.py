@@ -6,12 +6,15 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 from typing import List, Dict, Tuple
 
 from gliner import GLiNER
 import requests
 import spacy
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoConfig
+from spacy.language import Language
+from transformers import AutoTokenizer, AutoConfig
 from transformers import AutoModelForCausalLM
 
 
@@ -109,6 +112,10 @@ class OllamaLLM(LLM):
 			return json.loads(raw_json)
 		except: 
 			return []
+		
+	
+	def extract_entities_batch(self, texts: List[str]) -> List[List[str]]:
+		return [self.entity_extraction(text) for text in texts]
 	
 
 	def filter_texts(self, query: str, texts: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
@@ -146,7 +153,7 @@ class GlinerLLM(LLM):
 
 		# Initialize/load models.
 		self.ner = self._load_gliner_model()
-		self.nlp = spacy.load(spacy_model)
+		self.nlp = self._load_spacy_model()
 
 		default_items = [
 			"Person", "Org", "Product", "Event", "Concept"
@@ -182,6 +189,10 @@ class GlinerLLM(LLM):
 
 	def extract_entities(self, text) -> List[str]:
 		return self.ner.predict_entities(text, self.entity_items)
+	
+
+	def extract_entities_batch(self, texts: List[str]) -> List[List[str]]:
+		return self.ner.predict_entities_batch(texts, self.entity_items)
 	
 
 	def extract_triplets(self, text) -> List[Dict[str, str]]:
@@ -338,3 +349,26 @@ class GlinerLLM(LLM):
 
 		# Return the tokenizer and model.
 		return tokenizer, model
+	
+
+	def _load_spacy_model(self) -> Language:
+		try:
+			# Attempt to load the model.
+			return spacy.load(self.spacy_model)
+		except OSError:
+			print(f"Model {self.spacy_model} not found. Downloading...")
+			# Use uv to install it dynamically if available, otherwise 
+			# fallback to spacy.
+			try:
+				subprocess.run(
+					[
+						sys.executable, "-m", "pip", "install", 
+						f"https://github.com/explosion/spacy-models/releases/download/{self.spacy_model}-3.7.1/{self.spacy_model}-3.7.1-py3-none-any.whl"
+					], 
+					check=True
+				)
+			except:
+				# Standard spacy download fallback
+				spacy.cli.download(self.spacy_model)
+			
+			return spacy.load(self.spacy_model)

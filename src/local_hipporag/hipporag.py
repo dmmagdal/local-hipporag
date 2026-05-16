@@ -140,9 +140,10 @@ class HippoRAG:
 
 
 	def batch_ingest(self, documents: Dict[str, str], table_name: str) -> None:
-		vector_data = []
-		processed_entites = set()
+		all_entities_to_embed = []
+		doc_entity_map = {}
 
+		# Collect and store passages.
 		for doc_id, document in documents.items():
 			self.passages_db[doc_id] = document
 
@@ -151,35 +152,35 @@ class HippoRAG:
 				entity["text"].lower() 
 				for entity in self.llm.extract_entities(document)
 			]))
+			doc_entity_map[doc_id] = entities
 			self.passages_to_entities[doc_id] = entities
 
 			if not entities:
 				continue
 
+			# Collect unique entities across the batch for embedding.
 			for entity in entities:
 				# Skip the embedding and insert to DB steps if we've 
 				# already processed this entity in the batch.
-				if entity not in processed_entites:
-					try:
-						self.graphdb.add_entity(entity)
-						embedding = self.embedder.embed_text(
-							document,
-							truncate=True,
-							to_binary=self.use_binary,
-							vectors_only=True
-						)[0]
-						vector_data.append({
-							"vector": embedding["vector_binary"] if self.use_binary else embedding["Vector_full"],
-							"entity_name": entity,
-						})
-						processed_entites.add(entity)
-					except:
-						pass
+				if entity not in all_entities_to_embed:
+					all_entities_to_embed.append(entity)
+					self.graphdb.add_entity(entity)
 
-			# Create unweighted co-occurence edges.
-			for i in range(len(entities)):
-				for j in range(i + 1, len(entities)):
-					self.graphdb.co_occurences(entities[i], entities[j])
+		# Native batch emebedding.
+		batch_results = self.embedder.batch_embed_text(
+			all_entities_to_embed,
+			to_binary=self.use_binary,
+			vectors_only=True,
+		)
+
+		# Format for vectordb.
+		vector_data = []
+		for entity, result in zip(all_entities_to_embed, batch_results):
+			embedding = result["vector_binary"] if self.use_binary else result["vector_full"]
+			vector_data.append({
+				"vector": embedding, 
+				"entity_name": entity
+			})
 
 		# Insert all aggregated embeddings into vectordb at once.
 		if vector_data:
@@ -187,8 +188,14 @@ class HippoRAG:
 				table_name=table_name, 
 				data=vector_data
 			)
+
+		# Create unweighted co-occurence edges.
+		for entities in doc_entity_map.values():
+			for i in range(len(entities)):
+				for j in range(i + 1, len(entities)):
+					self.graphdb.co_occurences(entities[i], entities[j])
 	
-		self.graphdb.checkpoint()
+		# self.graphdb.checkpoint()
 
 
 	def query(self, query: str, table_name: str, top_k: int = 5) -> str:
@@ -211,7 +218,7 @@ class HippoRAG:
 				truncate=True,
 				to_binary=self.use_binary,
 				vectors_only=True,
-			)
+			)[0]
 			result = self.vectordb.search_table(
 				table_name=table_name,
 				query_vector=query_embedding["vector_binary"] if self.use_binary else query_embedding["vector_full"],
@@ -252,7 +259,7 @@ class HippoRAG:
 		# Rank passages based on total activation of their contained 
 		# entities.
 		passage_scores = {}
-		for passage_id, passage_entities in passage_entities.items():
+		for passage_id, passage_entities in self.passages_to_entities.items():
 			passage_scores[passage_id] = sum(
 				ppr_scores.get(entity, 0) for entity in passage_entities
 			)
@@ -424,57 +431,72 @@ class HippoRAG2:
 
 	
 	def batch_ingest(self, documents: Dict[str, str], table_name: str) -> None:
+		doc_ids = list(documents.keys())
+		texts = list(documents.values())
 		vector_data = []
-		processed_entities = set()
 
-		for doc_id, document in documents.items():
-			entities = list(set([
-				entity["text"].lower() for entity in self.llm.extract_entities(document)
-			]))
-			self.passages_to_entities[doc_id] = entities
-			
-			if not entities:
-				continue
-			
-			# Insert document into ladybug.
+		# Batch embed passages.
+		passage_batch_results = self.embedder.batch_embed_text(
+			texts,
+			to_binary=self.use_binary,
+			vectors_only=True,
+		)
+
+		all_unique_entities = set()
+		doc_to_entities = {}
+
+		for idx, (doc_id, document) in enumerate(documents.items()):
 			self.graphdb.add_text(document, doc_id=doc_id)
-
-			# Store document embeddings into lancedb.
-			p_vectors = [
-				{
-					"vector": vector["vector_binary"] if self.use_binary else vector["vector_full"],
+			
+			# Process passage embeddings from the batch.
+			for chunk in passage_batch_results[idx]:
+				vector_data.append({
+					"vector": chunk["vector_binary"] if self.use_binary else chunk["vector_full"],
 					"node_id": doc_id,
 					"type": "passage",
-					"text": document[vector["text_idx"]: vector["text_idx"] + vector["text_len"]]
-				}
-				for vector in self.embedder.embed_text(
-					document,
-					to_binary=self.use_binary,
-				)
-			]
-			vector_data.extend(p_vectors)
+					"text": document[chunk["text_idx"]: chunk["text_idx"] + chunk["text_len"]]
+				})
 
-			e_vectors = []
+			# Extract entities with GLiNER.
+			entities = list(set([
+				entity["text"].lower() 
+				for entity in self.llm.extract_entities(document)
+			]))
+			doc_to_entities[doc_id] = entities
+			all_unique_entities.update(entities)
+			self.passages_to_entities[doc_id] = entities
+
+		# Batch embed unique entities.
+		unique_entities_list = list(all_unique_entities)
+		for entity in unique_entities_list:
+			# Insert entity node.
+			self.graphdb.add_entity(entity)
+
+
+		# Batch embed unique entities.
+		entity_batch_results = self.embedder.batch_embed_text(
+			entities,
+			to_binary=self.use_binary,
+			vectors_only=True,
+		)
+		for entity, results in zip(entities, entity_batch_results):
+			embedding = results[0]["vector_binary"] if self.use_binary else results[0]["vector_full"]
+			vector_data.append({
+				"vector": embedding, 
+				"node_id": entity,
+				"type": "entity",
+				"text": ""
+			})
+
+		# Update vectordb and graph edges.
+		if vector_data:
+			self.vectordb.update_table(
+				table_name=table_name, 
+				data=vector_data
+			)
+
+		for doc_id, entities in doc_to_entities.items():
 			for entity in entities:
-				# Insert entity node.
-				try:
-					self.graphdb.add_entity(entity)
-					entity_embedding = self.embedder.embed_text(
-						entity, 
-						truncate=True, 
-						to_binary=self.use_binary,
-						vectors_only=True
-					)[0]
-					e_vectors.append({
-						"vector": entity_embedding["vector_binary"] if self.use_binary else entity_embedding["vector_full"],
-						"node_id": entity,
-						"type": "entity",
-						"text": ""
-					})
-					processed_entities.add(entity)
-				except:
-					pass
-
 				# Link documents to entities.
 				self.graphdb.link_docs_to_entities(doc_id, entity)
 
@@ -483,17 +505,7 @@ class HippoRAG2:
 				for j in range(i + 1, len(entities)):
 					self.graphdb.co_occurences(entities[i], entities[j])
 
-			vector_data.extend(e_vectors)
-
-		# Insert embeddings into vectordb.
-		# vector_data = p_vectors + e_vectors
-		if vector_data:
-			self.vectordb.update_table(
-				table_name=table_name, 
-				data=vector_data
-			)
-
-		self.graphdb.checkpoint()
+		# self.graphdb.checkpoint()
 
 
 	def query(self, query: str, table_name: str, top_k: int = 5) -> str:
@@ -503,7 +515,7 @@ class HippoRAG2:
 			truncate=True,
 			to_binary=self.use_binary,
 			vectors_only=True
-		)
+		)[0]
 
 		# Find seed nodes (can be entities or passages/documents).
 		results = self.vectordb.search_table(
@@ -558,7 +570,7 @@ class HippoRAG2:
 			for passage_id in ranked_passage_ids
 		]
 
-		filtered_texts = self.llm.filter_texts(self.query, retrieved_context)
+		filtered_texts = self.llm.filter_texts(query, retrieved_context)
 		retrieved_context = [text for _, text in filtered_texts]
 
 		# Response synthesis.

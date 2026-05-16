@@ -20,12 +20,13 @@ dependencies = [
     "huggingface-hub>=0.35.3",
     "ladybug>=0.16.1",
     "lancedb>=0.25.1",
-    "local-vectors>=0.1.6",
+    "local-vectors>=0.1.7",
     "networkx>=3.2",
     "numpy>=2.0.2",
     "pyarrow>=21.0.0",
     "requests>=2.32.5",
     "safetensors>=0.6.2",
+    "scipy>=1.8.0",
     "spacy>=3.8.14",
     "tokenizers>=0.22.0",
     "torch>=2.1.0",
@@ -36,6 +37,36 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
     "pytest-mock>=3.12.0",
+]
+
+# GPU configuration settings
+# 1. Define the special indices for GPU hardware
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm6.0"
+explicit = true
+
+# 2. Map the hardware to the correct index using markers
+[tool.uv.sources]
+torch = [
+  # Use CUDA for Linux/Windows (if NVIDIA is detected or as a default for those OSs)
+  { index = "pytorch-cu124", marker = "sys_platform != 'darwin'" },
+  # Standard PyPI (Apple Silicon / CPU) for macOS
+  { index = "pypi", marker = "sys_platform == 'darwin'" },
+]
+torchvision = [
+  { index = "pytorch-cu124", marker = "sys_platform != 'darwin'" },
+  { index = "pypi", marker = "sys_platform == 'darwin'" },
 ]
 
 [build-system]

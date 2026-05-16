@@ -50,7 +50,8 @@ class LadybugGraphDB:
 
 	def add_text(self, text: str, doc_id: str) -> None:
 			self.conn.execute(
-				f"CREATE (p:Passage {{id: $id, text: $text}})",
+				# f"CREATE (p:Passage {{id: $id, text: $text}})",
+				f"MERGE (p:Passage {{id: $id, text: $text}})",
 				{"id": doc_id, "text": text}
 			)
 
@@ -64,7 +65,11 @@ class LadybugGraphDB:
 
 
 	def add_entity(self, entity: str) -> None:
-		self.conn.execute(f"CREATE (e:Entity {{name: '{entity}'}})")
+		self.conn.execute(
+			# f"CREATE (e:Entity {{name: $entity}})",
+			f"MERGE (e:Entity {{name: $entity}})",
+			{"entity": entity}
+		)
 
 	
 	def get_topology(self, hipporagv2: bool = False) -> Tuple[QueryResult, QueryResult] | Tuple[QueryResult, QueryResult, QueryResult, QueryResult]:
@@ -118,7 +123,10 @@ class LadybugGraphDB:
 			MATCH (a:Entity {name: pair[0]}), (b:Entity {name: pair[1]})
 			MERGE (a)-[:CO_OCCURS]->(b)
 		"""
-		self.conn.execute(query, {"pairs": pairs})
+		self.conn.execute(
+			query, 
+			{"pairs": [(p[0].lower(), p[1].lower()) for p in pairs]}
+		)
 
 
 	def query(self, entity_id: str) -> List[str]:

@@ -75,8 +75,9 @@ def main():
 	storage_artifacts = [
 		vector_config["vector_db"],
 		graph_config["graph_db"],
-		"./graph",
-		"graph.wal",
+		f"{graph_config['graph_db']}.wal",
+		f"{graph_config['graph_db']}.wal.checkpoint",
+		f"{graph_config['graph_db']}.shadow"
 	]
 	if not args.no_reset:
 		for artifact in storage_artifacts:
@@ -87,7 +88,11 @@ def main():
 					os.remove(artifact)
 
 	# Detect GPU accelerators.
-	device = detect_device(force_cpu=True)
+	# device = detect_device(force_cpu=True)
+	device = detect_device()
+	# nomic-ai/nomic-embed-text-v1.5
+	# sentence-transformers/all-MiniLM-L6-v2
+	print(f"Running on device: {device}")
 
 	# Initialize hipporag with the configuration.
 	class_init = HippoRAG2 if args.use_hipporag_v2 else HippoRAG
@@ -131,43 +136,54 @@ def main():
 			pa.field("type", pa.string())
 		])
 
-	hipporag.build_vector_table(
-		table_name=vector_config["table_name"],
-		schema=schema,
-	)
+	if not args.no_reset:
+		hipporag.build_vector_table(
+			table_name=vector_config["table_name"],
+			schema=schema,
+		)
 
-	# Ingest and index the documents to the hipporag.
-	for split_name, data in documents.items():
-		if args.sequential_store:
-			for doc in tqdm(data, desc=f"Ingesting {split_name} split into Graph RAG"):
-				hipporag.ingest(
-					text=doc["chunk"], 
-					doc_id=doc["chunk_id"],
-					table_name=vector_config["table_name"]
-				)
-		else:
-			for idx in tqdm(range(0, len(data), vector_config["batch_size"]), desc=f"Ingesting {split_name} split into Graph RAG"):
-				docs = data[idx:idx + vector_config["batch_size"]]
-				doc_list = {
-					chunk_id: chunk
-					for chunk_id, chunk in zip(docs["chunk_id"], docs["chunk"])
-				}
-				hipporag.batch_ingest(
-					doc_list,
-					table_name=vector_config["table_name"]
-				)
+		# Ingest and index the documents to the hipporag.
+		for split_name, data in documents.items():
+			if args.sequential_store:
+				# Single (sequential) document ingestion.
+				for doc in tqdm(data, desc=f"Ingesting {split_name} split into Hippo RAG"):
+					hipporag.ingest(
+						text=doc["chunk"], 
+						doc_id=doc["chunk_id"],
+						table_name=vector_config["table_name"]
+					)
+			else:
+				# Batch document ingeston.
+				for idx in tqdm(range(0, len(data), vector_config["batch_size"]), desc=f"Ingesting {split_name} split into Hippo RAG"):
+					docs = data[idx:idx + vector_config["batch_size"]]
+					doc_list = {
+						chunk_id: chunk
+						for chunk_id, chunk in zip(docs["chunk_id"], docs["chunk"])
+					}
+					hipporag.batch_ingest(
+						doc_list,
+						table_name=vector_config["table_name"]
+					)
+
+			# Checkpoint.
+			hipporag.graphdb.checkpoint()
 
 	# Perform a query on the hipporag.
-	sampled_queries = queries.shuffle(seed=SEED).select(range(5))
-	for query in sampled_queries:
-		question, chunk_id, answer = query["og_query"], query["chunk_id"], query["answer"]
-		hipporag_answer = hipporag.query(question)
+	for split in queries:
+		print(f"Sampling questions to be answered from {split} split.")
+		print("=" * 72)
+		sampled_queries = queries[split].shuffle(seed=SEED).select(range(5))
+		for query in sampled_queries:
+			question, chunk_id, answer = query["og_query"], query["chunk_id"], query["answer"]
+			hipporag_answer = hipporag.query(question, vector_config["table_name"])
 
-		# Output results.
-		print(f"Question: {question}")
-		print(f"Expected answer: {answer} (chunk id {chunk_id})")
-		print(f"Generated answer: {hipporag_answer}")
-		print("-" * 72)
+			# Output results.
+			print(f"Question: {question}")
+			print(f"Expected answer: {answer} (chunk id {chunk_id})")
+			print(f"Generated answer: {hipporag_answer}")
+			print("-" * 72)
+
+		print("=" * 72)
 
 	# Clear all tables or databases since we're done.
 	if not args.no_reset:
