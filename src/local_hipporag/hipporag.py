@@ -10,6 +10,7 @@ import pyarrow as pa
 
 from .graphdb import LadybugGraphDB
 from .llm import OllamaLLM, GlinerLLM
+from .storage import SQLitePassageStore
 
 
 class HippoRAG:
@@ -17,6 +18,7 @@ class HippoRAG:
 		embed_model_id: str,
 		vector_db_path: str,
 		graph_db_path: str,
+		storage_db_path: str,
 		llm_model: str,
 		token_overlap: int = 128,													# Chunker + Embedder kwargs
 		batch_size: int = 8,
@@ -77,8 +79,9 @@ class HippoRAG:
 		self.metric = query_metric
 		
 		# Map of documents and documents to entities.
-		self.passages_db = {}
-		self.passages_to_entities = {}
+		# self.passages_db = {}
+		# self.passages_to_entities = {}
+		self.passage_store = SQLitePassageStore(storage_db_path)
 
 
 	def get_dims(self) -> int:
@@ -95,13 +98,14 @@ class HippoRAG:
 
 
 	def ingest(self, text: str, doc_id: str, table_name: str) -> None:
-		self.passages_db[doc_id] = text
+		# self.passages_db[doc_id] = text
 		
 		# Extract entities with GLiNER.
 		entities = list(set([
 			entity['text'].lower() for entity in self.llm.extract_entities(text)
 		]))
-		self.passages_to_entities[doc_id] = entities
+		# self.passages_to_entities[doc_id] = entities
+		self.passage_store.add_passage(doc_id, text, entities)
 		
 		if not entities:
 			return 
@@ -142,10 +146,11 @@ class HippoRAG:
 	def batch_ingest(self, documents: Dict[str, str], table_name: str) -> None:
 		all_entities_to_embed = []
 		doc_entity_map = {}
+		batch_storage_entries = []
 
 		# Collect and store passages.
 		for doc_id, document in documents.items():
-			self.passages_db[doc_id] = document
+			# self.passages_db[doc_id] = document
 
 			# Extract entities with Gliner.
 			entities = list(set([
@@ -153,7 +158,8 @@ class HippoRAG:
 				for entity in self.llm.extract_entities(document)
 			]))
 			doc_entity_map[doc_id] = entities
-			self.passages_to_entities[doc_id] = entities
+			# self.passages_to_entities[doc_id] = entities
+			batch_storage_entries.append((doc_id, document, entities))
 
 			if not entities:
 				continue
@@ -165,6 +171,9 @@ class HippoRAG:
 				if entity not in all_entities_to_embed:
 					all_entities_to_embed.append(entity)
 					self.graphdb.add_entity(entity)
+
+		if batch_storage_entries:
+			self.passage_store.add_passages_batch(batch_storage_entries)
 
 		# Native batch emebedding.
 		batch_results = self.embedder.batch_embed_text(
@@ -259,7 +268,8 @@ class HippoRAG:
 		# Rank passages based on total activation of their contained 
 		# entities.
 		passage_scores = {}
-		for passage_id, passage_entities in self.passages_to_entities.items():
+		# for passage_id, passage_entities in self.passages_to_entities.items():
+		for passage_id, passage_entities in self.passage_store.get_all_passages_to_entities().items():
 			passage_scores[passage_id] = sum(
 				ppr_scores.get(entity, 0) for entity in passage_entities
 			)
@@ -268,7 +278,8 @@ class HippoRAG:
 			passage_scores, key=passage_scores.get, reverse=True
 		)[:top_k]
 		retrieved_context = [
-			self.passages_db[passage_id] 
+			# self.passages_db[passage_id] 
+			self.passage_store.get_passage_text(passage_id)
 			for passage_id in ranked_passage_ids
 		]
 
@@ -288,6 +299,7 @@ class HippoRAG2:
 		embed_model_id: str,
 		vector_db_path: str,
 		graph_db_path: str,
+		storage_db_path: str,
 		llm_model: str,
 		token_overlap: int = 128,													# Chunker + Embedder kwargs
 		batch_size: int = 8,
@@ -349,8 +361,9 @@ class HippoRAG2:
 		self.metric = query_metric
 		
 		# Map of documents and documents to entities.
-		self.passages_db = {}
-		self.passages_to_entities = {}
+		# self.passages_db = {}
+		# self.passages_to_entities = {}
+		self.passage_store = SQLitePassageStore(storage_db_path)
 
 
 	def get_dims(self) -> int:
@@ -371,7 +384,8 @@ class HippoRAG2:
 		entities = list(set([
 			entity["text"].lower() for entity in self.llm.extract_entities(text)
 		]))
-		self.passages_to_entities[doc_id] = entities
+		# self.passages_to_entities[doc_id] = entities
+		self.passage_store.add_passage(doc_id, text, entities)
 		
 		if not entities:
 			return
@@ -434,6 +448,7 @@ class HippoRAG2:
 		doc_ids = list(documents.keys())
 		texts = list(documents.values())
 		vector_data = []
+		batch_storage_entries = []
 
 		# Batch embed passages.
 		passage_batch_results = self.embedder.batch_embed_text(
@@ -464,14 +479,17 @@ class HippoRAG2:
 			]))
 			doc_to_entities[doc_id] = entities
 			all_unique_entities.update(entities)
-			self.passages_to_entities[doc_id] = entities
+			# self.passages_to_entities[doc_id] = entities
+			batch_storage_entries.append((doc_id, document, entities))
+
+		if batch_storage_entries:
+			self.passage_store.add_passages_batch(batch_storage_entries)
 
 		# Batch embed unique entities.
 		unique_entities_list = list(all_unique_entities)
 		for entity in unique_entities_list:
 			# Insert entity node.
 			self.graphdb.add_entity(entity)
-
 
 		# Batch embed unique entities.
 		entity_batch_results = self.embedder.batch_embed_text(

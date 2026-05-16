@@ -70,6 +70,7 @@ def main():
 	vector_config = config["vector"]
 	graph_config = config["graph"]
 	llm_config = config["llm"]
+	storage_config = config["storage"]
 
 	# Clear any existing tables or databases.
 	storage_artifacts = [
@@ -77,7 +78,8 @@ def main():
 		graph_config["graph_db"],
 		f"{graph_config['graph_db']}.wal",
 		f"{graph_config['graph_db']}.wal.checkpoint",
-		f"{graph_config['graph_db']}.shadow"
+		f"{graph_config['graph_db']}.shadow",
+		storage_config['sqlite_db']
 	]
 	if not args.no_reset:
 		for artifact in storage_artifacts:
@@ -100,6 +102,7 @@ def main():
 		embed_model_id=vector_config["model_id"],
 		vector_db_path=vector_config["vector_db"],
 		graph_db_path=graph_config["graph_db"],
+		storage_db_path=storage_config["sqlite_db"],
 		llm_model=llm_config["model_id"],
 		token_overlap=vector_config["token_overlap"],
 		batch_size=vector_config["batch_size"],
