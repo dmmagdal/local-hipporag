@@ -16,18 +16,21 @@ class LadybugGraphDB:
 
 		# Initialize tables.
 		if self.hipporag2:
-			self.conn.execute(
-				"CREATE NODE TABLE Entity(name STRING, PRIMARY KEY (name))"
-			)
-			self.conn.execute(
-				"CREATE NODE TABLE Passage(id STRING, text STRING, PRIMARY KEY (id))"
-			)
-			self.conn.execute(
-				"CREATE REL TABLE CO_OCCURS(FROM Entity TO Entity)"
-			)
-			self.conn.execute(
-				"CREATE REL TABLE CONTAINS(FROM Passage TO Entity)"
-			)
+			try:
+				self.conn.execute(
+					"CREATE NODE TABLE Entity(name STRING, PRIMARY KEY (name))"
+				)
+				self.conn.execute(
+					"CREATE NODE TABLE Passage(id STRING, text STRING, PRIMARY KEY (id))"
+				)
+				self.conn.execute(
+					"CREATE REL TABLE CO_OCCURS(FROM Entity TO Entity)"
+				)
+				self.conn.execute(
+					"CREATE REL TABLE CONTAINS(FROM Passage TO Entity)"
+				)
+			except Exception as e:
+				print(f"Failed to create tables. Exception raise: {e}")
 		else:
 			try:
 				self.conn.execute(

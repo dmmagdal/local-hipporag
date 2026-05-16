@@ -1,6 +1,7 @@
 # hipporag.py
 
 
+from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List
 
@@ -253,7 +254,8 @@ class HippoRAG:
 
 		# Define restart probabilities focused entirely on the seed 
 		# nodes.
-		personalization = {node: 0.0 for node in nx_graph.nodes()}
+		# personalization = {node: 0.0 for node in nx_graph.nodes()}
+		personalization = {node: 1e-4 for node in nx_graph.nodes()} # Avoid divide by zero error in pagerank algo.
 		for seed in seed_nodes:
 			if seed in personalization:
 				personalization[seed] = 1.0
@@ -454,8 +456,13 @@ class HippoRAG2:
 		passage_batch_results = self.embedder.batch_embed_text(
 			texts,
 			to_binary=self.use_binary,
-			vectors_only=True,
+			vectors_only=False,
 		)
+
+		# Group the flat chunk results by their source document batch index
+		chunks_by_doc = defaultdict(list)
+		for chunk in passage_batch_results:
+			chunks_by_doc[chunk["doc_batch_idx"]].append(chunk)
 
 		all_unique_entities = set()
 		doc_to_entities = {}
@@ -463,8 +470,8 @@ class HippoRAG2:
 		for idx, (doc_id, document) in enumerate(documents.items()):
 			self.graphdb.add_text(document, doc_id=doc_id)
 			
-			# Process passage embeddings from the batch.
-			for chunk in passage_batch_results[idx]:
+			# Process passage embeddings from the batch using the grouped mapping.
+			for chunk in chunks_by_doc[idx]:
 				vector_data.append({
 					"vector": chunk["vector_binary"] if self.use_binary else chunk["vector_full"],
 					"node_id": doc_id,
@@ -491,14 +498,13 @@ class HippoRAG2:
 			# Insert entity node.
 			self.graphdb.add_entity(entity)
 
-		# Batch embed unique entities.
 		entity_batch_results = self.embedder.batch_embed_text(
-			entities,
+			unique_entities_list,
 			to_binary=self.use_binary,
 			vectors_only=True,
 		)
-		for entity, results in zip(entities, entity_batch_results):
-			embedding = results[0]["vector_binary"] if self.use_binary else results[0]["vector_full"]
+		for entity, results in zip(unique_entities_list, entity_batch_results):
+			embedding = results["vector_binary"] if self.use_binary else results["vector_full"]
 			vector_data.append({
 				"vector": embedding, 
 				"node_id": entity,
@@ -553,8 +559,10 @@ class HippoRAG2:
 		entities_df, passages_df, co_occurs_df, contains_df = entities.get_as_df(), passages.get_as_df(), co_occurs.get_as_df(), contains.get_as_df()
 
 		nx_graph = nx.Graph()
-		nx_graph.add_edges_from(entities_df["id"])
-		nx_graph.add_edges_from(passages_df["id"])
+		# nx_graph.add_edges_from(entities_df["id"])
+		# nx_graph.add_edges_from(passages_df["id"])
+		nx_graph.add_nodes_from(entities_df["id"])
+		nx_graph.add_nodes_from(passages_df["id"])
 		for _, row in co_occurs_df.iterrows():
 			nx_graph.add_edge(row["src"], row["dst"])
 		for _, row in contains_df.iterrows():
